@@ -1,2 +1,1 @@
-# mol-classify
-Molecule Classifier
+# gnn-multivp
