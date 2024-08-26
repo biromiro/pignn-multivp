@@ -69,19 +69,44 @@ def denormalize(X_normalized, normalization_info):
         if info["method"] == "standardization":
             mean = info["mean"]
             std = info["std"]
-            X_denormalized[:, var, :] = (
-                X_denormalized[:, var, :] * std) + mean
+            X_denormalized[:, :, var] = (
+                X_denormalized[:, :, var] * std) + mean
         if info["method"] == "log_standardization":
             mean = info["mean"]
             std = info["std"]
-            X_denormalized[:, var, :] = torch.expm1(
-                (X_denormalized[:, var, :] * std) + mean)
+            X_denormalized[:, :, var] = torch.expm1(
+                (X_denormalized[:, :, var] * std) + mean)
         elif info["method"] == "log_robust_scaling":
             scaler = info["scaler"]
-            X_denormalized[:, var, :] = torch.expm1(
-                scaler.inverse_transform(X_denormalized[:, var, :]))
+            X_denormalized[:, :, var] = torch.expm1(
+                scaler.inverse_transform(X_denormalized[:, :, var]))
 
     return X_denormalized
+
+
+def reshape_node_features_unordered(x, batch, num_graphs):
+    """
+    Reshapes data.x from [batch_size * k, n] to [batch_size, k, n].
+    Works even if nodes are not ordered by graph.
+    """
+    import torch
+
+    batch_size = num_graphs  # Number of graphs in the batch
+    num_node_features = x.size(1)
+
+    # Calculate number of nodes per graph
+    unique_batches, counts = torch.unique(batch, return_counts=True)
+    num_nodes_per_graph = counts[0].item()  # Assuming all graphs have same number of nodes
+
+    # Initialize the reshaped tensor
+    x_reshaped = x.new_zeros((batch_size, num_nodes_per_graph, num_node_features))
+
+    # Get indices for each graph
+    for i in range(batch_size):
+        mask = batch == i
+        x_reshaped[i] = x[mask]
+    
+    return x_reshaped
 
 
 def validation_step(model, dataloader, norm_info, epoch):
@@ -97,29 +122,28 @@ def validation_step(model, dataloader, norm_info, epoch):
             data = data.to(device)
             out = model(data.x, data.edge_index,
                         data.edge_attr, data.batch)  # Forward pass
-            out = out.view(data.batch.max().item() + 1, 540, -1)
-            loss = F.mse_loss(out, data.y.view(data.batch.max().item() + 1, 540, -1))
+            loss = F.mse_loss(out, data.y)
             loss_epoch += loss.item() * data.num_graphs  # Accumulate loss
 
             if epoch % 1 == 0:
                 # Store outputs for later analysis
-                all_outvars.append(data.y.view(data.batch.max().item() + 1, 540, -1).cpu())
-                all_predvars.append(out.view(data.batch.max().item() + 1, 540, -1).cpu())
+                all_outvars.append(reshape_node_features_unordered(data.y, data.batch, data.num_graphs))
+                all_predvars.append(reshape_node_features_unordered(out, data.batch, data.num_graphs))
 
     loss_epoch /= len(dataloader.dataset)
-
+    
     if epoch % 1 == 0:
         # Concatenate all predictions and ground truths
         all_outvars = torch.cat(all_outvars, dim=0).to(device)
         all_predvars = torch.cat(all_predvars, dim=0).to(device)
-        print(all_outvars.shape, all_predvars.shape)
+        print(dataloader.dataset.X.shape)
         # Convert data to numpy
         outvar = denormalize(all_outvars, norm_info[1]).detach().cpu().numpy()
         predvar = denormalize(
             all_predvars, norm_info[1]).detach().cpu().numpy()
 
         # Plotting
-        fig, axs = plt.subplots(3, 2, figsize=(12, 8))
+        fig, axs = plt.subplots(3, 2, figsize=(8, 12))
 
         output_names = ['n', 'v', 'T']
         lims = [[50, 500000000], [0, 800], [0, 5]]
@@ -139,7 +163,6 @@ def validation_step(model, dataloader, norm_info, epoch):
         plt.close()
 
     return loss_epoch
-
 
 @hydra.main(version_base="1.3", config_path="conf", config_name="config_gnn.yaml")
 def main(cfg: DictConfig):
@@ -244,9 +267,8 @@ def main(cfg: DictConfig):
                 )
                 loss_pde = F.l1_loss(pde_out_arr, torch.zeros_like(pde_out_arr))"""
 
-                out = out.view(data.batch.max().item() + 1, 540, -1)
                 # Compute data loss
-                loss_data = F.mse_loss(data.y.view(data.batch.max().item() + 1, 540, -1), out)
+                loss_data = F.mse_loss(data.y, out)
 
                 # Compute total loss
                 loss = loss_data  # + 1 / 240 * cfg.phy_wt * loss_pde

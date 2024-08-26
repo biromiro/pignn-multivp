@@ -1,11 +1,12 @@
 import torch
 from torch_geometric.data import Data, Dataset
+import matplotlib.pyplot as plt
 
 class ProfilesToGraphDataset(Dataset):
     def __init__(self, X, y):
         super(ProfilesToGraphDataset, self).__init__()
         self.X = X
-        self.y = y
+        self.y = y        
 
     def len(self):
         return self.X.shape[0]
@@ -17,9 +18,6 @@ class ProfilesToGraphDataset(Dataset):
 
         # Number of nodes (540 in this case)
         num_nodes = x_profile.shape[0]
-
-        # Node features (B, A/A0, alpha)
-        x = x_profile[:, [2, 3, 4]]  # Extract B, A/A0, alpha
 
         # Edge index (adjacency list)
         edge_index = torch.tensor(
@@ -33,12 +31,9 @@ class ProfilesToGraphDataset(Dataset):
         L_diff = x_profile[1:, 1] - x_profile[:-1, 1]  # L differences
         edge_attr = torch.stack([R_diff, L_diff], dim=1)
         # Duplicate for both directions
-        edge_attr = torch.cat([edge_attr, -edge_attr], dim=0)
-
-        # Target variables (n, v, T)
-        y = y_profile
-
+        edge_attr = torch.cat([edge_attr, edge_attr], dim=0)
+        
         # Create the graph object
-        data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
+        data = Data(x=x_profile[:, [2, 3, 4]], edge_index=edge_index, edge_attr=edge_attr, y=y_profile)
 
         return data
